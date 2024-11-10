@@ -1,4 +1,4 @@
-def handle_missing_early_cycles(self, target_measure_ids=None):
+def handle_missing_early_cycles(self, target_measure_ids=None, verbose=True):
     """
     Handles missing early cycles (01-03) for specific measure IDs in 2023.
     Creates synthetic rows based on the first available cycle (04) data.
@@ -11,6 +11,8 @@ def handle_missing_early_cycles(self, target_measure_ids=None):
     Args:
         target_measure_ids (list, optional): List of measure IDs to process.
             Defaults to ['901715'] if None provided.
+        verbose (bool, optional): If True, prints informative messages about processing.
+            Defaults to True.
             
     Returns:
         bool: True if processing was performed, False if no processing needed
@@ -38,8 +40,15 @@ def handle_missing_early_cycles(self, target_measure_ids=None):
     
     # Check if current measure_id_key needs processing
     current_measure_id = str(self.df['measure_id_key'].iloc[0])
+    
     if current_measure_id not in target_measure_ids:
+        if verbose:
+            print(f"Measure ID {current_measure_id} is not in target list {target_measure_ids}. "
+                  f"No processing performed. DataFrame remains unchanged.")
         return False
+    
+    if verbose:
+        print(f"Processing measure ID {current_measure_id}")
         
     # Reset index if needed to access year and period
     if not isinstance(self.df.index, pd.MultiIndex):
@@ -48,6 +57,9 @@ def handle_missing_early_cycles(self, target_measure_ids=None):
     # Find the first row for 2023-04
     source_idx = (2023, 4)
     if source_idx not in self.df.index:
+        if verbose:
+            print(f"Cycle 2023-04 not found for measure ID {current_measure_id}. "
+                  f"Cannot create synthetic rows. DataFrame remains unchanged.")
         return False
         
     source_row = self.df.loc[source_idx].copy()
@@ -61,10 +73,13 @@ def handle_missing_early_cycles(self, target_measure_ids=None):
     # Create synthetic rows for periods 1-3
     new_rows = []
     base_rate = source_row['measure_rate']
+    original_row_count = len(self.df)
     
     for period in range(3, 0, -1):
         # Skip if row already exists
         if (2023, period) in self.df.index:
+            if verbose:
+                print(f"Cycle 2023-{period:02d} already exists. Skipping.")
             continue
             
         # Create new row
@@ -86,6 +101,10 @@ def handle_missing_early_cycles(self, target_measure_ids=None):
             pd.MultiIndex.from_tuples([(2023, period)], names=['year', 'period']),
             pd.DataFrame([new_row])
         ))
+        
+        if verbose:
+            print(f"Created synthetic row for cycle 2023-{period:02d} with "
+                  f"measure rate {new_row['measure_rate']:.4f}")
     
     # Add all new rows to DataFrame
     for idx, row_df in new_rows:
@@ -94,5 +113,9 @@ def handle_missing_early_cycles(self, target_measure_ids=None):
     
     # Sort index to maintain proper order
     self.df.sort_index(inplace=True)
+    
+    if verbose:
+        rows_added = len(self.df) - original_row_count
+        print(f"Processing complete. Added {rows_added} synthetic rows.")
     
     return True
