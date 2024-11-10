@@ -1,7 +1,8 @@
-def handle_missing_early_cycles(self, target_measure_ids=None, verbose=True):
+def handle_missing_AMO(self, target_measure_ids=None, verbose=True):
     """
-    Handles missing early cycles (01-03) for specific measure IDs in 2023.
-    Creates synthetic rows based on the first available cycle (04) data.
+    Handles missing Annual Measurement Only (AMO) cases:
+    1. For 2023-01 through 2023-03: Creates synthetic rows based on 2023-04 data with adjusted rates
+    2. For 2023-16: Creates synthetic row based on 2023-15 data with same rate
     
     Args:
         target_measure_ids (list, optional): List of measure IDs to process.
@@ -49,75 +50,90 @@ def handle_missing_early_cycles(self, target_measure_ids=None, verbose=True):
     if not isinstance(self.df.index, pd.MultiIndex):
         self._create_time_components()
     
-    # Find the first row for 2023-04
-    source_idx = (2023, 4)
+    original_row_count = len(self.df)
+    new_rows = []
+    
+    # First, handle period 16 if missing
+    source_idx_16 = (2023, 15)  # Source row for period 16
+    target_idx_16 = (2023, 16)  # Target period 16
+    
+    if target_idx_16 not in self.df.index and source_idx_16 in self.df.index:
+        source_row_16 = self.df.loc[source_idx_16].copy()
+        source_row_16['cycle_id'] = "2023-16"
+        source_row_16['synthetic'] = 1
+        source_row_16['instance_data_through_dt'] = None
+        
+        # Create new index and DataFrame for period 16
+        new_idx_16 = pd.MultiIndex.from_tuples([target_idx_16], names=['year', 'period'])
+        new_df_16 = pd.DataFrame([source_row_16])
+        new_df_16.index = new_idx_16
+        new_rows.append(new_df_16)
+        
+        if verbose:
+            print(f"Created synthetic row for cycle 2023-16 with "
+                  f"measure rate {source_row_16['measure_rate']:.4f}")
+    
+    # Now handle periods 01-03
+    source_idx = (2023, 4)  # Source row for periods 01-03
     if source_idx not in self.df.index:
         if verbose:
             print(f"Cycle 2023-04 not found for measure ID {current_measure_id}. "
-                  f"Cannot create synthetic rows. DataFrame remains unchanged.")
-        return False
+                  f"Cannot create synthetic rows for periods 01-03.")
+        # Continue processing as we might have added period 16
+    else:
+        source_row = self.df.loc[source_idx].copy()
         
-    source_row = self.df.loc[source_idx].copy()
-    
-    # Determine if we should add or subtract based on flags
-    inverse_logic = (
-        source_row['inverse_measure_flag'] == 1 or 
-        source_row['lower_rate_is_better_flag'] == 1
-    )
-    
-    # Create synthetic rows for periods 1-3
-    new_rows = []
-    base_rate = source_row['measure_rate']
-    original_row_count = len(self.df)
-    
-    for period in range(3, 0, -1):
-        # Skip if row already exists
-        if (2023, period) in self.df.index:
-            if verbose:
-                print(f"Cycle 2023-{period:02d} already exists. Skipping.")
-            continue
-            
-        # Create new row
-        new_row = source_row.copy()
-        
-        # Update cycle_id for the new row
-        new_row['cycle_id'] = f"2023-{period:02d}"  # Ensures proper formatting (e.g., "2023-01")
-        
-        # Calculate new measure rate
-        steps_from_04 = 4 - period  # Number of steps back from period 04
-        if inverse_logic:
-            adjustment = 0.01 * steps_from_04  # Add 1 percentage point per step
-        else:
-            adjustment = -0.01 * steps_from_04  # Subtract 1 percentage point per step
-        
-        new_row['measure_rate'] = base_rate + adjustment
-        new_row['synthetic'] = 1
-        new_row['instance_data_through_dt'] = None
-        
-        # Create new index with correct integer types
-        new_idx = pd.MultiIndex.from_tuples(
-            [(2023, period)], 
-            names=['year', 'period']
+        # Determine if we should add or subtract based on flags
+        inverse_logic = (
+            source_row['inverse_measure_flag'] == 1 or 
+            source_row['lower_rate_is_better_flag'] == 1
         )
         
-        # Add to new rows list
-        new_df = pd.DataFrame([new_row])
-        new_df.index = new_idx
-        new_rows.append(new_df)
+        base_rate = source_row['measure_rate']
         
-        if verbose:
-            print(f"Created synthetic row for cycle {new_row['cycle_id']} with "
-                  f"measure rate {new_row['measure_rate']:.4f}")
+        # Create synthetic rows for periods 1-3
+        for period in range(3, 0, -1):
+            # Skip if row already exists
+            if (2023, period) in self.df.index:
+                if verbose:
+                    print(f"Cycle 2023-{period:02d} already exists. Skipping.")
+                continue
+                
+            # Create new row
+            new_row = source_row.copy()
+            new_row['cycle_id'] = f"2023-{period:02d}"
+            
+            # Calculate new measure rate
+            steps_from_04 = 4 - period  # Number of steps back from period 04
+            if inverse_logic:
+                adjustment = 0.01 * steps_from_04  # Add 1 percentage point per step
+            else:
+                adjustment = -0.01 * steps_from_04  # Subtract 1 percentage point per step
+            
+            new_row['measure_rate'] = base_rate + adjustment
+            new_row['synthetic'] = 1
+            new_row['instance_data_through_dt'] = None
+            
+            # Create new index and DataFrame
+            new_idx = pd.MultiIndex.from_tuples([(2023, period)], names=['year', 'period'])
+            new_df = pd.DataFrame([new_row])
+            new_df.index = new_idx
+            new_rows.append(new_df)
+            
+            if verbose:
+                print(f"Created synthetic row for cycle {new_row['cycle_id']} with "
+                      f"measure rate {new_row['measure_rate']:.4f}")
     
-    # Add all new rows to DataFrame
+    # Add all new rows to DataFrame if any were created
     if new_rows:
         self.df = pd.concat([self.df] + new_rows)
-        
-        # Sort index to maintain proper order
         self.df.sort_index(inplace=True)
+        
+        if verbose:
+            rows_added = len(self.df) - original_row_count
+            print(f"Processing complete. Added {rows_added} synthetic rows.")
+        return True
     
     if verbose:
-        rows_added = len(self.df) - original_row_count
-        print(f"Processing complete. Added {rows_added} synthetic rows.")
-    
-    return True
+        print("No synthetic rows needed to be added.")
+    return False
