@@ -49,12 +49,6 @@ def handle_missing_early_cycles(self, target_measure_ids=None, verbose=True):
     if not isinstance(self.df.index, pd.MultiIndex):
         self._create_time_components()
     
-    # Convert index levels to integers to ensure consistent typing
-    self.df.index = self.df.index.set_levels([
-        self.df.index.levels[0].astype(np.int64),
-        self.df.index.levels[1].astype(np.int64)
-    ])
-    
     # Find the first row for 2023-04
     source_idx = (2023, 4)
     if source_idx not in self.df.index:
@@ -86,6 +80,9 @@ def handle_missing_early_cycles(self, target_measure_ids=None, verbose=True):
         # Create new row
         new_row = source_row.copy()
         
+        # Update cycle_id for the new row
+        new_row['cycle_id'] = f"2023-{period:02d}"  # Ensures proper formatting (e.g., "2023-01")
+        
         # Calculate new measure rate
         steps_from_04 = 4 - period  # Number of steps back from period 04
         if inverse_logic:
@@ -99,7 +96,7 @@ def handle_missing_early_cycles(self, target_measure_ids=None, verbose=True):
         
         # Create new index with correct integer types
         new_idx = pd.MultiIndex.from_tuples(
-            [(np.int64(2023), np.int64(period))], 
+            [(2023, period)], 
             names=['year', 'period']
         )
         
@@ -109,18 +106,12 @@ def handle_missing_early_cycles(self, target_measure_ids=None, verbose=True):
         new_rows.append(new_df)
         
         if verbose:
-            print(f"Created synthetic row for cycle 2023-{period:02d} with "
+            print(f"Created synthetic row for cycle {new_row['cycle_id']} with "
                   f"measure rate {new_row['measure_rate']:.4f}")
     
     # Add all new rows to DataFrame
     if new_rows:
         self.df = pd.concat([self.df] + new_rows)
-        
-        # Ensure index types are consistent
-        self.df.index = self.df.index.set_levels([
-            self.df.index.levels[0].astype(np.int64),
-            self.df.index.levels[1].astype(np.int64)
-        ])
         
         # Sort index to maintain proper order
         self.df.sort_index(inplace=True)
