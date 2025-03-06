@@ -32,3 +32,50 @@ def update_dataframe_values(df1, df2):
             updated_df.at[idx, 'measure_rate'] = hybrid_mapping[key]['measure_rate']
     
     return updated_df
+
+
+
+import pandas as pd
+
+# Assuming you have a DataFrame loaded from the SQL database
+# df = pd.read_sql("SELECT * FROM HEDIS.MHJ.QPR_IFP_HYBRID_HIST", connection)
+
+# Get the maximum Run_Month value
+max_run_month = df['Run_Month'].max()
+
+# Filter the data
+filtered_df = df[
+    (df['Run_Month'] == max_run_month) & 
+    (df['Max_Month'] == 1) & 
+    (df['LOB'] == 'IFP')
+]
+
+# Create the calculated field for 'num'
+def calculate_num(row):
+    if row['Measure_ID_Key'] in ['100501', '100201', '105201']:
+        return row['MRSS_Denom'] - (row['MRSS_Admin_Num'] + row['MRSS_Med_Num'])
+    else:
+        return row['MRSS_Admin_Num'] + row['MRSS_Med_Num']
+
+# Apply the calculation
+filtered_df['num'] = filtered_df.apply(calculate_num, axis=1)
+
+# Select and rename columns
+result_df = filtered_df[[
+    'measurement_year',
+    'Run_Month',
+    'Book_Name',
+    'Internal_QPR_Measure_Key',
+    'Measure_ID_Key',
+    'hybrid_time',
+    'measure_name',
+    'MRSS_Denom',
+    'num',
+    'measure_rate'
+]].rename(columns={
+    'Run_Month': 'cycle_id',
+    'MRSS_Denom': 'den'
+})
+
+# Sort the results
+result_df = result_df.sort_values(by=['Book_Name', 'Measure_ID_Key'])
