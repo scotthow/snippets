@@ -1,26 +1,34 @@
-# Assuming admin_data and hybrid_data are already loaded
-
-# Creating a composite key for efficient matching
-admin_data['composite_key'] = admin_data['book_name'] + '_' + admin_data['measure_id_key'] + '_' + admin_data['cycle_id'].astype(str)
-hybrid_data['composite_key'] = hybrid_data['book_name'] + '_' + hybrid_data['measure_id_key'] + '_' + hybrid_data['cycle_id'].astype(str)
-
-# Create a mapping from hybrid_data
-hybrid_map = hybrid_data.set_index('composite_key')[['num', 'den', 'measure_rate']].to_dict('index')
-
-# Function to update rows based on the mapping
-def update_row(row):
-    key = row['composite_key']
-    if key in hybrid_map:
-        row['num'] = hybrid_map[key]['num']
-        row['den'] = hybrid_map[key]['den']
-        row['measure_rate'] = hybrid_map[key]['measure_rate']
-    return row
-
-# Apply the update function to each row in admin_data
-admin_data = admin_data.apply(update_row, axis=1)
-
-# Remove the temporary composite_key column
-admin_data = admin_data.drop('composite_key', axis=1)
-
-# Verify the update (optional)
-print(f"Updated {len(set(admin_data['composite_key']).intersection(set(hybrid_data['composite_key'])))} records")
+def update_dataframe_values(df1, df2):
+    """
+    Replace 'num', 'den', and 'measure_rate' values in df1 if 'book_name' and 'measure_id_key'
+    match with those in df2 (hybrid dataframe).
+    
+    Parameters:
+    df1 (pandas.DataFrame): The original dataframe to be updated
+    df2 (pandas.DataFrame): The hybrid dataframe containing new values
+    
+    Returns:
+    pandas.DataFrame: The updated dataframe
+    """
+    # Create a copy of the original dataframe to avoid modifying it directly
+    updated_df = df1.copy()
+    
+    # Create a mapping for efficient lookups
+    hybrid_mapping = {}
+    for _, row in df2.iterrows():
+        key = (row['book_name'], row['measure_id_key'])
+        hybrid_mapping[key] = {
+            'num': row['num'],
+            'den': row['den'],
+            'measure_rate': row['measure_rate']
+        }
+    
+    # Update the df1 where matches are found
+    for idx, row in updated_df.iterrows():
+        key = (row['book_name'], row['measure_id_key'])
+        if key in hybrid_mapping:
+            updated_df.at[idx, 'num'] = hybrid_mapping[key]['num']
+            updated_df.at[idx, 'den'] = hybrid_mapping[key]['den']
+            updated_df.at[idx, 'measure_rate'] = hybrid_mapping[key]['measure_rate']
+    
+    return updated_df
