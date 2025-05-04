@@ -2,67 +2,52 @@
 elif HYBRID_PERIOD == 0:
     logging.info(f'{population} - {measure} in HYBRID PERIOD {HYBRID_PERIOD}')
     
-    # Get the current year
-    current_year = MEASUREMENT_YEAR
+    # Get all the possible cycle_ids up to the max one in the dataframe
+    max_cycle_id = df['cycle_id'].max()
+    max_year = int(max_cycle_id.split('-')[0])
+    max_period = int(max_cycle_id.split('-')[1])
     
-    # Create all possible cycle_ids for the current measurement year
-    # We always check all 16 cycle_ids for the current measurement year
-    all_possible_cycle_ids = [f"{current_year}-{str(i).zfill(2)}" for i in range(1, 17)]
+    # Generate all expected cycle_ids that should exist up to the max one
+    expected_cycle_ids = []
+    for year in range(int(MEASUREMENT_YEAR) - 1, max_year + 1):
+        for period in range(1, 17):
+            cycle_id = f"{year}-{period:02d}"
+            # Only include cycle_ids up to the max one
+            if (year < max_year) or (year == max_year and period <= max_period):
+                expected_cycle_ids.append(cycle_id)
     
-    # Find missing cycle_ids
-    existing_cycle_ids = df['cycle_id'].values
-    missing_cycle_ids = [cycle_id for cycle_id in all_possible_cycle_ids if cycle_id not in existing_cycle_ids]
-    
-    # For each missing cycle_id, copy the preceding row
-    for missing_id in missing_cycle_ids:
-        # Extract the month number
-        month_num = int(missing_id.split('-')[1])
-        
-        # For cycle_ids ending in "01", set a special zero value row
-        if month_num == 1:
-            # Create a zero value row for the first month
-            if len(df) > 0:
-                # Use structure of an existing row but zero out the values
-                row_to_copy = df.iloc[0].copy()
-                # Keep only structural columns, zero out metrics
-                for col in row_to_copy.index:
-                    if col not in ['cycle_id', 'model_id', 'synthetic']:
-                        try:
-                            float(row_to_copy[col])  # Check if it's a numeric column
-                            row_to_copy[col] = 0
-                        except:
-                            pass  # Keep non-numeric columns as is
-            else:
-                # If no rows exist, create a basic row with zeros
-                row_to_copy = pd.Series({'synthetic': 1, 'model_id': model_id})
+    # Check for any missing cycle_ids and create synthetic rows
+    for cycle_id in expected_cycle_ids:
+        if cycle_id not in df['cycle_id'].values:
+            # Get the previous cycle_id to copy from
+            year = int(cycle_id.split('-')[0])
+            period = int(cycle_id.split('-')[1])
             
-            # Update cycle_id
-            row_to_copy['cycle_id'] = missing_id
-            row_to_copy['synthetic'] = 1
-            row_to_copy['model_id'] = model_id
-        else:
-            # For all other months, copy the preceding month
-            prev_cycle_id = f"{current_year}-{str(month_num-1).zfill(2)}"
-            
-            # Check if we have the preceding cycle_id
-            if prev_cycle_id in existing_cycle_ids:
-                # Copy the row with the preceding cycle_id
-                row_to_copy = df[df['cycle_id'] == prev_cycle_id].copy().iloc[0]
-                # Update the cycle_id
-                row_to_copy['cycle_id'] = missing_id
-                # Mark as synthetic
-                row_to_copy['synthetic'] = 1
-                # Ensure proper model_id
-                row_to_copy['model_id'] = model_id
+            if period == 1:
+                # For first period in a cycle (XX-01), find the previous year's last period
+                prev_cycle_id = f"{year-1}-16"
+                # Check if the previous cycle exists, if not, create a row with measure_rate=0
+                if prev_cycle_id in df['cycle_id'].values:
+                    row_to_copy = df[df['cycle_id'] == prev_cycle_id].copy()
+                    row_to_copy['cycle_id'] = cycle_id
+                    row_to_copy['model_id'] = model_id  # IMPORTANT: ensure the proper model id
+                    row_to_copy['synthetic'] = 1
+                else:
+                    # Create a template row from any existing row
+                    template_row = df.iloc[0].copy()
+                    row_to_copy = pd.DataFrame([template_row])
+                    row_to_copy['cycle_id'] = cycle_id
+                    row_to_copy['model_id'] = model_id
+                    row_to_copy['synthetic'] = 1
+                    row_to_copy['measure_rate'] = 0  # Set measure_rate to zero for first in cycle
             else:
-                logging.warning(f"Cannot create synthetic entry for {missing_id}: preceding cycle_id {prev_cycle_id} also missing")
-                continue
-        
-        # Convert row_to_copy to DataFrame if it's a Series
-        if isinstance(row_to_copy, pd.Series):
-            row_to_copy = pd.DataFrame([row_to_copy])
-        
-        # Append row to original df
-        df = pd.concat([df, row_to_copy], ignore_index=True)
-        
-        logging.info(f"Created synthetic entry for missing cycle_id {missing_id}")
+                # For other periods, find the previous period
+                prev_cycle_id = f"{year}-{period-1:02d}"
+                if prev_cycle_id in df['cycle_id'].values:
+                    row_to_copy = df[df['cycle_id'] == prev_cycle_id].copy()
+                    row_to_copy['cycle_id'] = cycle_id
+                    row_to_copy['model_id'] = model_id
+                    row_to_copy['synthetic'] = 1
+            
+            # Append the new row to the dataframe
+            df = pd.concat([df, row_to_copy], ignore_index=True)
