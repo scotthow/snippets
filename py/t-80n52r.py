@@ -2,108 +2,91 @@
 elif HYBRID_PERIOD == 0:
     logging.info(f'{population} - {measure} in HYBRID PERIOD {HYBRID_PERIOD}')
     
-    # Get all the possible cycle_ids up to the max one in the dataframe
+    # Find all unique measurement years in the dataframe
+    all_years = set()
+    for cycle in df['cycle_id'].values:
+        year = cycle.split('-')[0]
+        all_years.add(int(year))
+    
+    # Get the max cycle_id
     max_cycle_id = df['cycle_id'].max()
     max_year, max_period = int(max_cycle_id.split('-')[0]), int(max_cycle_id.split('-')[1])
     
-    # Generate all expected cycle_ids that should exist up to the max one
+    # Generate all expected cycle_ids that should exist
     expected_cycle_ids = []
-    for year in range(int(MEASUREMENT_YEAR) - 1, max_year + 1):
-        for period in range(1, 17):
+    for year in sorted(all_years):
+        # For each year, add all periods (01-16) unless it's the max year
+        periods_to_check = 16
+        if year == max_year:
+            periods_to_check = max_period
+            
+        for period in range(1, periods_to_check + 1):
             cycle_id = f"{year}-{period:02d}"
-            # Only include cycle_ids up to the max one
-            if (year < max_year) or (year == max_year and period <= max_period):
-                expected_cycle_ids.append(cycle_id)
-    
-    # Sort expected_cycle_ids to ensure we process them in chronological order
-    expected_cycle_ids.sort()
+            expected_cycle_ids.append(cycle_id)
     
     # Create a set of existing cycle_ids for faster lookup
     existing_cycle_ids = set(df['cycle_id'].values)
     
-    # Check for any missing cycle_ids and create synthetic rows
-    synthetic_rows = []
+    # Find missing cycle_ids
+    missing_cycle_ids = [cid for cid in expected_cycle_ids if cid not in existing_cycle_ids]
     
-    for cycle_id in expected_cycle_ids:
-        if cycle_id not in existing_cycle_ids:
-            year, period = int(cycle_id.split('-')[0]), int(cycle_id.split('-')[1])
+    # Sort missing cycle_ids to ensure we process them in chronological order
+    missing_cycle_ids.sort()
+    
+    # Create synthetic rows for all missing cycle_ids
+    for cycle_id in missing_cycle_ids:
+        year, period = int(cycle_id.split('-')[0]), int(cycle_id.split('-')[1])
+        
+        if period == 1:
+            # For first period in a cycle (XX-01)
+            prev_cycle_id = f"{year-1}-16"
             
-            if period == 1:
-                # For first period in a cycle (XX-01)
-                prev_cycle_id = f"{year-1}-16"
-                
-                # Check if we have the previous cycle_id (either original or synthetic)
-                if prev_cycle_id in existing_cycle_ids:
-                    row_to_copy = df[df['cycle_id'] == prev_cycle_id].copy()
-                elif any(r['cycle_id'] == prev_cycle_id for r in synthetic_rows):
-                    # Get from our new synthetic rows if not in original df
-                    row_to_copy = next(pd.DataFrame([r]) for r in synthetic_rows if r['cycle_id'] == prev_cycle_id)
-                else:
-                    # Create a template row if we don't have the previous cycle
-                    row_to_copy = pd.DataFrame([df.iloc[0].copy()])
-                
-                # Update the row attributes
-                row_to_copy['cycle_id'] = cycle_id
-                row_to_copy['model_id'] = model_id
-                row_to_copy['synthetic'] = 1
-                row_to_copy['measure_rate'] = 0  # Set measure_rate to zero for first in cycle
+            if prev_cycle_id in existing_cycle_ids:
+                row_to_copy = df[df['cycle_id'] == prev_cycle_id].copy()
             else:
-                # For other periods, find the previous period
-                prev_cycle_id = f"{year}-{period-1:02d}"
+                # If previous cycle doesn't exist, use any existing row as a template
+                row_to_copy = df.iloc[0:1].copy()
+            
+            # Update the row attributes
+            row_to_copy['cycle_id'] = cycle_id
+            row_to_copy['model_id'] = model_id
+            row_to_copy['synthetic'] = 1
+            row_to_copy['measure_rate'] = 0  # Set measure_rate to zero for first in cycle
+        else:
+            # For other periods, find the previous period
+            prev_cycle_id = f"{year}-{period-1:02d}"
+            
+            if prev_cycle_id in existing_cycle_ids:
+                row_to_copy = df[df['cycle_id'] == prev_cycle_id].copy()
+            else:
+                # If the immediate previous period is also missing,
+                # find the latest available period before this one
+                available_periods = []
+                for p in range(1, period):
+                    check_cycle = f"{year}-{p:02d}"
+                    if check_cycle in existing_cycle_ids:
+                        available_periods.append(check_cycle)
                 
-                # Check if we have the previous cycle_id (either original or synthetic)
-                if prev_cycle_id in existing_cycle_ids:
-                    row_to_copy = df[df['cycle_id'] == prev_cycle_id].copy()
-                elif any(r['cycle_id'] == prev_cycle_id for r in synthetic_rows):
-                    # Get from our new synthetic rows if not in original df
-                    for r in synthetic_rows:
-                        if r['cycle_id'] == prev_cycle_id:
-                            row_to_copy = pd.DataFrame([r.copy()])
-                            break
+                if available_periods:
+                    # Use the latest available period in the same year
+                    latest_available = sorted(available_periods)[-1]
+                    row_to_copy = df[df['cycle_id'] == latest_available].copy()
                 else:
-                    # If previous period is also missing, find the latest available period
-                    available_periods = [
-                        cid for cid in existing_cycle_ids.union({r['cycle_id'] for r in synthetic_rows})
-                        if cid.startswith(f"{year}-") and int(cid.split('-')[1]) < period
-                    ]
-                    
-                    if available_periods:
-                        latest_period = max(available_periods, key=lambda x: int(x.split('-')[1]))
-                        if latest_period in existing_cycle_ids:
-                            row_to_copy = df[df['cycle_id'] == latest_period].copy()
-                        else:
-                            for r in synthetic_rows:
-                                if r['cycle_id'] == latest_period:
-                                    row_to_copy = pd.DataFrame([r.copy()])
-                                    break
+                    # If no periods available in this year, try the last period of the previous year
+                    prev_year_last = f"{year-1}-16"
+                    if prev_year_last in existing_cycle_ids:
+                        row_to_copy = df[df['cycle_id'] == prev_year_last].copy()
                     else:
-                        # If no period is available for this year, get the last period of previous year
-                        prev_year_latest = f"{year-1}-16"
-                        if prev_year_latest in existing_cycle_ids:
-                            row_to_copy = df[df['cycle_id'] == prev_year_latest].copy()
-                        elif any(r['cycle_id'] == prev_year_latest for r in synthetic_rows):
-                            for r in synthetic_rows:
-                                if r['cycle_id'] == prev_year_latest:
-                                    row_to_copy = pd.DataFrame([r.copy()])
-                                    break
-                        else:
-                            # Create a template row if all else fails
-                            row_to_copy = pd.DataFrame([df.iloc[0].copy()])
+                        # If all else fails, use any row as a template
+                        row_to_copy = df.iloc[0:1].copy()
             
-                # Update the row attributes
-                row_to_copy['cycle_id'] = cycle_id
-                row_to_copy['model_id'] = model_id
-                row_to_copy['synthetic'] = 1
-            
-            # Add to our list of synthetic rows
-            if isinstance(row_to_copy, pd.DataFrame):
-                synthetic_row = row_to_copy.iloc[0].to_dict()
-                synthetic_rows.append(synthetic_row)
-            
-            # Update our set of existing cycle_ids to include this new synthetic one
-            existing_cycle_ids.add(cycle_id)
-    
-    # Append all synthetic rows to the dataframe
-    if synthetic_rows:
-        synthetic_df = pd.DataFrame(synthetic_rows)
-        df = pd.concat([df, synthetic_df], ignore_index=True)
+            # Update the row attributes
+            row_to_copy['cycle_id'] = cycle_id
+            row_to_copy['model_id'] = model_id
+            row_to_copy['synthetic'] = 1
+        
+        # Append the new row to the dataframe
+        df = pd.concat([df, row_to_copy], ignore_index=True)
+        
+        # Update our set of existing cycle_ids to include this new synthetic one
+        existing_cycle_ids.add(cycle_id)
