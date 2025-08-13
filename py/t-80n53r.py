@@ -36,6 +36,8 @@ class HEDISPreprocessor:
         self.normality_results = {}
         self.log_transformed_cols = []
         self.power_transformed_cols = []
+        self.original_train_distribution = None
+        self.balanced_train_distribution = None
         
     def check_class_imbalance(self, y):
         """Check and visualize class imbalance"""
@@ -224,6 +226,10 @@ class HEDISPreprocessor:
             X, y, test_size=test_size, random_state=self.random_state, stratify=y
         )
         
+        # Store original training distribution
+        unique, counts = np.unique(y_train, return_counts=True)
+        self.original_train_distribution = dict(zip(unique, counts))
+        
         # Test normality and transform
         X_train = self.test_normality(X_train, self.feature_names)
         X_test = self.test_normality(X_test, self.feature_names)
@@ -244,7 +250,14 @@ class HEDISPreprocessor:
         # Apply SMOTE if needed
         if needs_smote:
             X_train_resampled, y_train_resampled = self.smote.fit_resample(X_train, y_train)
+            
+            # Store balanced training distribution
+            unique, counts = np.unique(y_train_resampled, return_counts=True)
+            self.balanced_train_distribution = dict(zip(unique, counts))
+            
             print(f"SMOTE applied: {len(y_train)} → {len(y_train_resampled)} samples")
+            print(f"  Original training set: Class 0: {self.original_train_distribution[0]}, Class 1: {self.original_train_distribution[1]}")
+            print(f"  Balanced training set: Class 0: {self.balanced_train_distribution[0]}, Class 1: {self.balanced_train_distribution[1]}")
             print()
             return X_train_resampled, X_test, y_train_resampled, y_test, feature_scores
         
@@ -306,19 +319,54 @@ class HEDISModelEvaluator:
     def plot_results(self, X_test, y_test, feature_scores):
         """Create professional visualization dashboard - individual charts"""
         
-        # 1. Class Distribution (Original vs SMOTE)
-        plt.figure(figsize=(10, 6))
-        original_counts = pd.Series(y_test).value_counts()
-        bars = plt.bar(original_counts.index, original_counts.values, color=['#FF6B6B', '#4ECDC4'], width=0.6)
-        plt.title('Class Distribution (Test Set After SMOTE Training)', fontsize=14, fontweight='bold', pad=20)
-        plt.xlabel('HEDIS Compliance Status', fontsize=12)
-        plt.ylabel('Number of Members', fontsize=12)
-        plt.xticks([0, 1], ['Non-Compliant', 'Compliant'], fontsize=11)
-        for bar, value in zip(bars, original_counts.values):
-            plt.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.5, 
-                    f'{value}\n({value/len(y_test)*100:.1f}%)', 
-                    ha='center', fontweight='bold', fontsize=11)
-        plt.grid(axis='y', alpha=0.3)
+        # 1. Class Distribution Pie Charts (Before and After SMOTE)
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+        
+        # Original distribution pie chart
+        if self.preprocessor.original_train_distribution:
+            labels = ['Non-Compliant', 'Compliant']
+            sizes_orig = [self.preprocessor.original_train_distribution[0], 
+                         self.preprocessor.original_train_distribution[1]]
+            colors = ['#FF6B6B', '#4ECDC4']
+            explode = (0.05, 0.05)
+            
+            ax1.pie(sizes_orig, explode=explode, labels=labels, colors=colors, autopct='%1.1f%%',
+                   shadow=True, startangle=90, textprops={'fontsize': 12, 'fontweight': 'bold'})
+            ax1.set_title('Original Training Set Distribution\n(Before SMOTE)', 
+                         fontsize=14, fontweight='bold', pad=20)
+            
+            # Add count labels
+            total_orig = sum(sizes_orig)
+            ax1.text(0, -1.3, f'Total: {total_orig} samples\nClass 0: {sizes_orig[0]} | Class 1: {sizes_orig[1]}', 
+                    ha='center', fontsize=11)
+        
+        # Balanced distribution pie chart (After SMOTE)
+        if self.preprocessor.balanced_train_distribution:
+            sizes_balanced = [self.preprocessor.balanced_train_distribution[0], 
+                            self.preprocessor.balanced_train_distribution[1]]
+            
+            ax2.pie(sizes_balanced, explode=explode, labels=labels, colors=colors, autopct='%1.1f%%',
+                   shadow=True, startangle=90, textprops={'fontsize': 12, 'fontweight': 'bold'})
+            ax2.set_title('Balanced Training Set Distribution\n(After SMOTE)', 
+                         fontsize=14, fontweight='bold', pad=20)
+            
+            # Add count labels
+            total_balanced = sum(sizes_balanced)
+            ax2.text(0, -1.3, f'Total: {total_balanced} samples\nClass 0: {sizes_balanced[0]} | Class 1: {sizes_balanced[1]}', 
+                    ha='center', fontsize=11)
+        else:
+            # If SMOTE wasn't applied, show test distribution
+            unique, counts = np.unique(y_test, return_counts=True)
+            sizes_test = counts
+            ax2.pie(sizes_test, explode=explode, labels=labels, colors=colors, autopct='%1.1f%%',
+                   shadow=True, startangle=90, textprops={'fontsize': 12, 'fontweight': 'bold'})
+            ax2.set_title('Test Set Distribution\n(Unchanged)', 
+                         fontsize=14, fontweight='bold', pad=20)
+            ax2.text(0, -1.3, f'Total: {sum(sizes_test)} samples\nClass 0: {sizes_test[0]} | Class 1: {sizes_test[1]}', 
+                    ha='center', fontsize=11)
+        
+        plt.suptitle('Class Distribution: Impact of SMOTE Balancing', 
+                    fontsize=16, fontweight='bold', y=1.05)
         plt.tight_layout()
         plt.show()
         
